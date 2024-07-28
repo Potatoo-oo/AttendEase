@@ -1,0 +1,356 @@
+//JW
+function SheetUI() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('Automation')
+      .addItem('Calculate Attendance Percentage', 'CalAttPerc')
+      .addToUi();
+}
+ 
+function CalAttPerc(){
+  //Get Active Sheet
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Check in");
+
+  //Get Last Row
+  var lastRow = sheet.getLastRow();
+
+  //Define Range for ID and date
+  var r_name = sheet.getRange("A2:A"+lastRow);
+  var r_ID = sheet.getRange("B2:B"+lastRow);
+  var r_date = sheet.getRange("C2:C"+lastRow);
+  
+
+  //Get values in column
+  var ID_values = r_ID.getValues();
+  var Date_values = r_date.getValues();
+  var name_values = r_name.getValues();
+
+  //Object to store counts for each name
+  var IDCounts = {};
+  var IDDates = {};
+  var dailyCounts = {};
+  
+  //Create set to track processed (ID, date) pairs
+  var processedPairs = new Set();
+  var totalUniqueDays = new Set();
+
+  //Loop to count
+  for(var i = 0; i<ID_values.length;i++)
+  {
+    var ID = ID_values[i][0];
+    var date = new Date(Date_values[i][0]);
+    var name = name_values[i][0];
+    date.setHours(0,0,0,0);
+    var dateStr = date.toISOString().slice(0, 10); // Format date as YYYY-MM-DD
+
+    if(ID !=="" && name!="") //ignore empty cells
+    {
+      var idDatePair = ID + "_" + dateStr;
+      totalUniqueDays.add(dateStr);
+
+      if(!processedPairs.has(idDatePair)) //check if pair is in list
+      {
+        processedPairs.add(idDatePair);
+        if(!IDCounts[ID])
+        {
+          IDCounts[ID]={count: 0, name: name};
+          IDDates[ID] = new Set();
+        }
+        
+        IDCounts[ID].count++;
+        IDDates[ID].add(dateStr);
+
+        // Update dailyCounts
+        if (!dailyCounts[dateStr]) {
+          dailyCounts[dateStr] = new Set();
+        }
+        dailyCounts[dateStr].add(ID);
+      }
+    }
+  }
+
+  //Display Values
+  var resultSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Attendance"); //Find Sheet
+  if(!resultSheet)
+  {
+    resultSheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Attendance"); //Create Sheet if not found
+  }
+  else
+  {
+    resultSheet.clear(); //clear sheet
+  } 
+
+  //Add headers
+  resultSheet.getRange("A1").setValue("Name");
+  resultSheet.getRange("B1").setValue("ID");
+  resultSheet.getRange("C1").setValue("Count");
+  resultSheet.getRange("D1").setValue("Attendance %");
+
+
+  //Insert Results
+  var row = 2; //start from 2nd row
+  var totalDays = totalUniqueDays.size; //Total number of unique days
+  for (var ID in IDCounts)
+  {
+    var count = IDCounts[ID].count;
+    var attendancePercentage = (count/totalDays)*100;  
+
+    resultSheet.getRange("A"+ row).setValue(IDCounts[ID].name);
+    resultSheet.getRange("B"+ row).setValue(ID);
+    resultSheet.getRange("C"+ row).setValue(count);
+    resultSheet.getRange("D" + row).setValue(attendancePercentage.toFixed(2)+"%");
+    row++;
+  }
+
+  BarChart(dailyCounts);
+  PieChart(IDCounts, totalDays);
+}
+
+function BarChart(dailyCounts)
+{
+  var resultSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Attendance");
+  var chartSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Charts");
+
+  if(!chartSheet)
+  {
+    chartSheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet("Charts");
+  }
+  else
+  {
+    clearsheet(chartSheet);
+  }
+
+  var dailyData = [["Date","Number of Workers"]];
+  for(var date in dailyCounts)
+  {
+    dailyData.push([date, dailyCounts[date].size]);
+  }
+
+  chartSheet.getRange("A1:B"+ dailyData.length).setValues(dailyData);
+
+  var barChart = chartSheet.newChart()
+    .setChartType(Charts.ChartType.BAR)
+    .addRange(chartSheet.getRange("A1:B" + dailyData.length))
+    .setPosition (1,6,0,0)
+    .setOption('title','Overall Attendance')
+    .build();
+
+  chartSheet.insertChart(barChart);
+}
+
+function PieChart(IDCounts, totalDays)
+{
+  var chartSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Charts");
+  var row = 1;
+  
+  var pieData = [["ID", "Attendance Count"]];
+  for(var ID in IDCounts)
+  {
+    var name = IDCounts[ID].name;
+    var counts = IDCounts[ID].count;
+    var attendancePercentage = (counts / totalDays) * 100;
+
+    var pieData =[["Category","Value"], ["Attended", attendancePercentage],["Absent", 100-attendancePercentage]];
+
+    //Insert data to chart
+    chartSheet.getRange("D" + row + ":E" + (row + pieData.length - 1)).setValues(pieData);
+
+    var pieChart= chartSheet.newChart()
+    .setChartType(Charts.ChartType.PIE)
+    .addRange(chartSheet.getRange("D" + row + ":E" + (row + pieData.length-1)))
+    .setPosition(row,12,0,0)
+    .setOption('title',name + '\'s Attendance')
+    .setOption('legend.position','right')
+    .build();
+
+    chartSheet.insertChart(pieChart);
+
+    row += pieData.length + 15; //Move down for next chart
+  }
+}
+
+function clearsheet(chartSheet)
+{
+  var charts = chartSheet.getCharts();
+  for(var i =0; i<charts.length; i++)
+  {
+    chartSheet.removeChart(charts[i]);
+  }
+
+  chartSheet.clear();
+}
+
+//ID and Email mapping
+
+function getIdToEmailMap() {
+  const sheetName = 'Information'; // Sheet with ID to email mapping
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  
+  if (!sheet) {
+    Logger.log('Sheet not found: ' + sheetName);
+    return {};
+  }
+
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+  const idToEmailMap = {};
+
+  for (let i = 1; i < values.length; i++) {
+    const id = values[i][1];
+    const email = values[i][3];
+    idToEmailMap[id] = email;
+  }
+
+  return idToEmailMap;
+}
+
+// Leave Application
+
+function sendApprovalEmail() {
+  const leaveSheetName = 'Leave application'; 
+  const staffSheetName = 'Information'; 
+  
+  // Get the active spreadsheet and the sheets
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const leaveSheet = spreadsheet.getSheetByName(leaveSheetName);
+  const staffSheet = spreadsheet.getSheetByName(staffSheetName);
+  
+  if (!leaveSheet || !staffSheet) {
+    Logger.log('One or both sheets not found');
+    return;
+  }
+
+  // Get all data from the leave application sheet
+  const leaveRange = leaveSheet.getDataRange();
+  const leaveValues = leaveRange.getValues();
+
+  // Retrieve the email mapping using the getIdToEmailMap function
+  const idToEmailMap = getIdToEmailMap();
+
+  // Loop through all rows of data, starting from the second row
+  for (let i = 1; i < leaveValues.length; i++) {
+    let requestDate = leaveValues[i][0];
+    let idNum = leaveValues[i][1];
+    let name = leaveValues[i][2];
+    let reason = leaveValues[i][3];
+    let evidence = leaveValues[i][4];
+    let status = leaveValues[i][5];
+    let approvalDate = leaveValues[i][6];
+    
+    // Lookup email address using ID
+    let email = idToEmailMap[idNum];
+    
+    if (!email) {
+      Logger.log('Email not found for ID: ' + idNum);
+      continue; // Skip to the next row if email is not found
+    }
+
+    if (status === "approve" || status === "not approve") {
+      if (!approvalDate) {
+        let subject = "Leave Request Status";
+        let body = `Dear ${name} (${idNum}),\n\nYour leave request for ${requestDate} because of ${reason} has been ${status}.\n\nBest regards,\nHR Team`;
+        
+        Logger.log('Sending email to: ' + email);
+        Logger.log('Subject: ' + subject);
+        Logger.log('Body: ' + body);
+        
+        try {
+          MailApp.sendEmail(email, subject, body);
+          leaveSheet.getRange(i + 1, 7).setValue(new Date()); // Record the date when the email was sent in the correct column
+        } catch (error) {
+          Logger.log('Error sending email: ' + error.toString());
+        }
+      }
+    }
+  }
+}
+
+//Monthly Staff Report
+
+function generateAndSendMonthlyReports() {
+  const sheetName = 'Attendance'; // Update this if your sheet name is different
+  const totalWorkday = 22;
+  const efpRate = 0.12;
+  const socsoRate = 0.01;
+
+  // Get the active spreadsheet and the sheet
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = spreadsheet.getSheetByName(sheetName);
+
+  if (!sheet) {
+    Logger.log('Sheet not found: ' + sheetName);
+    return;
+  }
+
+  // Retrieve the ID to email mapping
+  const idToEmailMap = getIdToEmailMap();
+
+  // Get all data from the sheet
+  const range = sheet.getDataRange();
+  const values = range.getValues();
+
+  // Loop through all rows of data, starting from the second row
+  for (let i = 1; i < values.length; i++) {
+    const name = values[i][0];
+    const id = values[i][1];
+    const workdayCounts = values[i][2];
+    const attendancePercentage = values[i][3];
+    const monthlySalary = values[i][4];
+
+    // Salary Calculation
+    const grossSalary = (monthlySalary * attendancePercentage);
+    const epfDeduction = (grossSalary * efpRate);
+    const socsoDeduction = (grossSalary * socsoRate);
+    const netSalary = (grossSalary - epfDeduction - socsoDeduction);
+
+    // Create the email content
+    const subject = `Monthly Report for ${name}`;
+    const emailBody = `
+      Dear ${name},
+
+      Here is your monthly report:
+
+      - Total Workdays: ${workdayCounts} / ${totalWorkday}
+      - Gross Salary: ${grossSalary}
+      - EPF: RM${epfDeduction.toFixed(2)}
+      - SOCSO: RM${socsoDeduction.toFixed(2)}
+      - Net Salary: RM${netSalary.toFixed(2)}
+
+      Best regards,
+      HR Team
+    `;
+
+    // Lookup email address using ID
+    const email = idToEmailMap[id];
+
+    if (email) {
+      // Send the email with the report content
+      try {
+        MailApp.sendEmail({
+          to: email,
+          subject: subject,
+          body: emailBody
+        });
+        Logger.log(`Report sent to ${name} at ${email}`);
+      } catch (error) {
+        Logger.log('Error sending email: ' + error.toString());
+      }
+    } else {
+      Logger.log(`Email not found for Staff ID: ${id}`);
+    }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
